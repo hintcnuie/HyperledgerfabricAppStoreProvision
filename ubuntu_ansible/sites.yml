@@ -1,0 +1,212 @@
+---
+- hosts: fabric
+  vars:
+    http_port: 80
+    userGroup_docker: "docker:x:999:root"
+    gopath_dir: "/home/{{ansible_ssh_user}}/go"
+    goroot_dir: "/usr/local/go"
+    gopath_fabric_dir: "{{gopath_dir}}/src/github.com/hyperledger/fabric"
+    goroot_fabric_dir: "{{goroot_dir}}/src/github.com/hyperledger/fabric"
+  tasks:
+    - name: test connection
+      ping:
+      remote_user: root
+    - name: Update all packages to the latest version
+      apt:
+        force_apt_get: yes
+        update_cache: yes      
+    - name: upgrade all packages to the latest version
+      apt:
+        upgrade: dist
+    - name: install apt-transport-https
+      apt:
+        name: apt-transport-https
+    - name: install ca-certificates
+      apt:
+        name: ca-certificates
+    - name: install curl
+      apt:
+        name: curl
+    - name: install  software-properties-common
+      apt:
+        name: software-properties-common
+    - name: install make command
+      apt:
+        name: make
+    - name: export GOROOT
+      shell: export GOROOT=/usr/local/go
+    - name:  export GOPATH=/home/$USER/go
+      shell: export GOPATH=/home/$USER/go
+    - name: export path
+      shell: export PATH=$PATH:$GOPATH/bin:$GOROOT/bin
+    - name: export GOROOT
+      shell: echo "export GOROOT=/usr/local/go"   >>  /etc/profile
+    - name:  export GOPATH=/home/$USER/go
+      shell: echo "export GOPATH=/home/$USER/go" >> /etc/profile
+    - name: export path
+      shell: echo "export PATH=$PATH:$GOPATH/bin:/usr/local/go/bin" >> /etc/profile
+    - name: source /etc/profile
+      shell: source /etc/profile
+    - name: create directory of hyperledger in github
+      shell: mkdir -p $GOPATH/src/github.com/hyperledger
+    - name: echo GOROOT
+      shell: echo $GOROOT
+      register: sysout
+    - debug: msg={{sysout.stdout}} 
+    - name: add ppa apt repo
+      apt_repository:
+       repo: 'ppa:gophers/archive'  
+       update_cache: yes
+    - name: Install Golang
+      apt:
+        name: golang-1.9-go
+    - name: check Golang version
+      shell: go version
+    - name: check Golang env
+      shell: go env
+      register: golangEnv
+    - debug: msg={{golangEnv}}
+    - name: configure nodejs repo
+      shell: curl -sL https://deb.nodesource.com/setup_6.x | sudo -E bash -
+    - name: install nodejs
+      apt:
+        name: nodejs
+    - name: check node version
+      shell: node --version
+      register: nodeVersion
+    - debug: msg={{nodeVersion}}
+    - name: install npm
+      npm:
+        name: npm
+        version: 3.10.10
+        global: yes
+    - name: Uninstall old version of docker
+      apt:
+        name: docker
+        state: absent
+    - name: Uninstall old version of  docker-engine
+      apt:
+        name: docker-engine
+        state: absent
+    - name: Uninstall old version of docker.io
+      apt:
+        name:  docker.io
+        state: absent
+    - name: add Docker GPG key
+      shell: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+      register: sysout
+    - debug: msg={{sysout.stdout}}      
+    - name: Verify have the key with the fingerprint 9DC8 5822 9FC7 DD38 854A E2D8 8D81 803C 0EBF CD88
+      shell: apt-key fingerprint 0EBFCD88
+      register: sysout
+    - name: get lsb_release system information
+      shell: lsb_release -cs
+      register: lsbReleaseCS
+    - debug: msg={{lsbReleaseCS}}
+    - name: set up the stable repository
+      shell: add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+      register: sysout
+    - debug: msg={{sysout.stdout}}               
+    - name: APT Update 
+      apt:
+        update_cache: yes              
+    - name: install docker-ce
+      apt:
+        name: docker-ce 
+    - name: query if group exist
+      shell: egrep "^docker" /etc/group
+      register: dockerGroupExist
+    - debug: msg={{dockerGroupExist.stdout}}   
+    - name: group add docker
+      shell: groupadd docker
+      when: dockerGroupExist.stdout != userGroup_docker
+    - name: docker group add  curren user
+      shell: usermod -aG docker $USER
+      when: dockerGroupExist.stdout != userGroup_docker
+    - name: systemctl enable docker
+      shell: systemctl enable docker
+      register: sysout
+    - name: docker version
+      shell: docker version
+      register: sysout
+    - debug: msg={{sysout.stdout}}   
+    - name:  apt-get install python-pip -y
+      apt:
+       name: python-pip
+       state: present    
+    - name: install docker compose using python-pip
+      pip:
+        name: docker-compose
+    - name: docker compose version
+      shell: docker-compose --version
+      register: sysout
+    - debug: msg={{sysout.stdout}}   
+    - name:  apt-get install libtool -y
+      apt:
+       name: libtool
+       state: present    
+    - name:  apt-get install libltdl-dev -y
+      apt:
+       name: libltdl-dev
+       state: present  
+    - name: detect if the fabric-samples exist
+      stat:
+        path: /home/$USER/fabric-samples
+      register: st
+    - name: get Fabric samples from github
+      git:
+        repo: https://github.com/hyperledger/fabric-samples
+        dest: /home/$USER/fabric-samples
+      when: st.stat.exists == False
+    - name: setup goroot_dir  directory
+      file:
+        path: "{{goroot_fabric_dir}}"
+        state: directory
+        mode: 0755
+    - name: setup  GOPATH directory
+      file:
+        path: "{{gopath_fabric_dir}}"
+        state: directory
+        mode: 0777
+    - name: download Hyperledger source
+      git:
+        repo: https://github.com/hyperledger/fabric.git
+        dest: "{{gopath_fabric_dir}}"
+        force: yes
+      register: fabirc_source_status
+    - debug: msg={{fabirc_source_status}}
+    - name: check makefile exist
+      stat:
+       path: /usr/local/go/src/github.com/hyperledger/fabric/Makefile
+      register: makefile_exist
+    - name: make release 
+      shell: make -f /usr/local/go/src/github.com/hyperledger/fabric/Makefile
+      register: makeout
+      when: makefile_exist.stat.exists == True
+    - debug: msg={{makeout.stdout}}   
+    - name: copy to goroot 
+      shell: cp -r /home/$USER/go/src/github.com/hyperledger/fabric/ /usr/local/go/src/github.com/hyperledger/fabric/
+    - name: copy release 
+      shell: cp -r -u /home/$USER/go/src/github.com/hyperledger/fabric/release/linux-amd64/bin/* /usr/local/bin
+    - name: prepare to download Hyperledger Docker images
+      shell: chmod +x /home/$USER/src/github.com/hyperledger/fabric/examples/e2e_cli/download-dockerimages.sh
+    - name: Download Hyperledger Docker images
+      shell: /home/$USER/src/github.com/hyperledger/fabric/examples/e2e_cli/download-dockerimages.sh
+    - name:  apt-get install libssl-dev
+      apt:
+       name: libssl-dev
+       state: present
+    - name:  apt-get install openssl
+      apt:
+       name: openssl
+       state: present     
+    - name:  apt-get install bless
+      apt:
+       name: bless
+       state: present     
+    - name: Remove useless packages from the cache
+      apt:
+        autoclean: yes
+    - name: Remove dependencies that are no longer required
+      apt:
+        autoremove: yes
